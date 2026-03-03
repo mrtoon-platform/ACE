@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Users, Copy, Plus, Play, MessageSquare, Send, Trophy } from 'lucide-react';
+import { Users, Copy, Plus, Play, MessageSquare, Send, Trophy, Maximize, Minimize, ArrowLeft, Home } from 'lucide-react';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
 const socket = io(BACKEND_URL);
@@ -48,7 +48,7 @@ const Card = ({ suit, value, onClick, isBack, style }) => {
 
 export default function App() {
     const [view, setView] = useState('landing');
-    const [playerName, setPlayerName] = useState('');
+    const [playerName, setPlayerName] = useState(localStorage.getItem('ace_name') || '');
     const [roomCode, setRoomCode] = useState('');
     const [currentRoomCode, setCurrentRoomCode] = useState('');
     const [gameState, setGameState] = useState(null);
@@ -61,7 +61,18 @@ export default function App() {
     const [chatMessages, setChatMessages] = useState([]);
     const [chatInput, setChatInput] = useState('');
     const [showChat, setShowChat] = useState(false);
+    const [isFullScreen, setIsFullScreen] = useState(false);
+    const [windowSize, setWindowSize] = useState({ width: window.innerWidth, height: window.innerHeight });
     const chatEndRef = useRef(null);
+
+    useEffect(() => {
+        const handleResize = () => setWindowSize({ width: window.innerWidth, height: window.innerHeight });
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
+
+    const isMobile = windowSize.width < 768;
+    const tableRadius = isMobile ? 100 : 125;
 
     useEffect(() => {
         if (showChat) chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -87,24 +98,26 @@ export default function App() {
         socket.on('room_created', ({ roomCode, playerIndex, players, playerName: name }) => {
             setCurrentRoomCode(roomCode);
             setPlayerIndex(playerIndex);
-            setPlayerName(name); // Use server-confirmed name
+            setPlayerName(name);
             setIsHost(true);
             setView('lobby');
             setPlayersCount(1);
             if (players) setPlayers(players);
             localStorage.setItem('ace_room', roomCode);
             localStorage.setItem('ace_name', name);
+            setError(null);
         });
 
         socket.on('joined_room', ({ roomCode, playerIndex, players, playerName: name }) => {
             setCurrentRoomCode(roomCode);
             setPlayerIndex(playerIndex);
-            setPlayerName(name); // Use server-confirmed name
+            setPlayerName(name);
             setIsHost(false);
             setView('lobby');
             if (players) setPlayers(players);
             localStorage.setItem('ace_room', roomCode);
             localStorage.setItem('ace_name', name);
+            setError(null);
         });
 
         socket.on('player_joined', ({ playersCount, players }) => {
@@ -122,6 +135,7 @@ export default function App() {
                 setPlayerName(name);
                 setCurrentRoomCode(localStorage.getItem('ace_room'));
             }
+            setError(null);
             setView('game');
         });
 
@@ -182,6 +196,47 @@ export default function App() {
         setChatInput('');
     };
 
+    const toggleFullScreen = () => {
+        if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen();
+            setIsFullScreen(true);
+        } else {
+            if (document.exitFullscreen) {
+                document.exitFullscreen();
+                setIsFullScreen(false);
+            }
+        }
+    };
+
+    const handleGoHome = () => {
+        if (window.confirm('Exit to main menu?')) {
+            localStorage.removeItem('ace_room');
+            localStorage.removeItem('ace_name');
+            window.location.reload();
+        }
+    };
+
+    const handleGoBack = () => {
+        if (view === 'lobby') setView('landing');
+        else if (view === 'game') handleGoHome();
+    };
+
+    const navButtons = (
+        <div className="nav-controls">
+            {view !== 'landing' && (
+                <button className="nav-btn" onClick={handleGoBack} title="Back">
+                    <ArrowLeft size={20} />
+                </button>
+            )}
+            <button className="nav-btn" onClick={handleGoHome} title="Home">
+                <Home size={20} />
+            </button>
+            <button className="nav-btn" onClick={toggleFullScreen} title="Toggle Full Screen">
+                {isFullScreen ? <Minimize size={20} /> : <Maximize size={20} />}
+            </button>
+        </div>
+    );
+
     const copyRoomCode = () => {
         navigator.clipboard.writeText(currentRoomCode);
         setError('Room code copied!');
@@ -197,6 +252,7 @@ export default function App() {
     if (view === 'landing') {
         return (
             <div className="landing-screen">
+                {navButtons}
                 <motion.h1 initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="title">
                     Pattern Card Game
                 </motion.h1>
@@ -205,7 +261,7 @@ export default function App() {
                         <input
                             type="text"
                             placeholder="YOUR NAME"
-                            value={playerName}
+                            value={playerName || ''}
                             onChange={(e) => setPlayerName(e.target.value)}
                         />
                     </div>
@@ -231,6 +287,7 @@ export default function App() {
     if (view === 'lobby') {
         return (
             <div className="lobby-screen">
+                {navButtons}
                 <div className="lobby-card">
                     <h2>Room: {currentRoomCode}</h2>
                     <button className="copy-btn" onClick={copyRoomCode}>
@@ -271,6 +328,7 @@ export default function App() {
     if (gameState && gameState.isGameOver) {
         return (
             <div className="game-over-screen">
+                {navButtons}
                 <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="game-over-card">
                     <h1 className="donkey-title">DONKEY!</h1>
                     <div className="loser-badge">
@@ -299,6 +357,7 @@ export default function App() {
 
     return (
         <div className="game-container">
+            {navButtons}
             {isOut && (
                 <div className="out-overlay">
                     <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="out-overlay-card">
@@ -364,7 +423,7 @@ export default function App() {
                     {gameState?.players.map((p, i) => {
                         const angle = (i / gameState.players.length) * 360;
                         const rad = (angle * Math.PI) / 180;
-                        const radius = 125;
+                        const radius = tableRadius;
                         return (
                             <div key={`spot-${i}`} className={`player-spot-placeholder ${p.isOut ? 'out' : ''}`} style={{ transform: `translate(-50%, -50%) translate(${Math.sin(rad) * radius}px, ${Math.cos(rad) * -radius}px) rotate(${angle - 180}deg)` }}>
                                 <div className="placeholder-name" style={{ transform: `rotate(${-(angle - 180)}deg)` }}>{gameState.playerNames[i]} {p.isOut ? '🏁' : ''}</div>
@@ -375,7 +434,7 @@ export default function App() {
                         {gameState?.currentTrick.map((move, i) => {
                             const angle = (move.playerIndex / gameState.players.length) * 360;
                             const rad = (angle * Math.PI) / 180;
-                            const radius = 125;
+                            const radius = tableRadius;
                             return (
                                 <motion.div key={`${move.card.suit}-${move.card.value}`} initial={{ opacity: 0, scale: 1.2, x: 0, y: 300, rotate: 0 }} animate={{ opacity: 1, scale: 1, x: Math.sin(rad) * radius, y: Math.cos(rad) * -radius, rotate: angle - 180 }} exit={{ opacity: 0, scale: 1.1, x: Math.sin(rad) * radius * 1.5, y: Math.cos(rad) * -radius * 1.5, transition: { delay: i * 0.1 } }} transition={{ type: "spring", stiffness: 180, damping: 18 }} style={{ position: 'absolute', zIndex: 10 + i }}>
                                     <Card suit={move.card.suit} value={move.card.value} />
@@ -403,7 +462,7 @@ export default function App() {
 
             {gameState?.players.map((p, idx) => (
                 idx !== playerIndex && (
-                    <div key={idx} className={`opponent-badge p${idx} ${p.isOut ? 'out' : ''}`} style={getOpponentStyle(idx, gameState.players.length)}>
+                    <div key={idx} className={`opponent-badge p${idx} ${p.isOut ? 'out' : ''}`} style={getOpponentStyle(idx, gameState.players.length, isMobile)}>
                         {gameState.playerNames[idx]}: {p.isOut ? 'Winner' : p.cardCount}
                     </div>
                 )
@@ -413,13 +472,14 @@ export default function App() {
     );
 }
 
-const getOpponentStyle = (idx, total) => {
+const getOpponentStyle = (idx, total, isMobile) => {
     const angle = (idx / total) * 360;
     const rad = (angle * Math.PI) / 180;
+    const dist = isMobile ? 42 : 40;
     return {
         position: 'absolute',
-        top: `${50 + Math.cos(rad) * -40}%`,
-        left: `${50 + Math.sin(rad) * 40}%`,
+        top: `${50 + Math.cos(rad) * -dist}%`,
+        left: `${50 + Math.sin(rad) * dist}%`,
         transform: 'translate(-50%, -50%)',
         padding: '8px 15px',
         background: 'rgba(0,0,0,0.6)',
