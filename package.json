@@ -1,0 +1,9 @@
+{
+    "name": "ace-multiplayer-card-game",
+    "version": "1.0.0",
+    "scripts": {
+        "backend": "cd backend && node server.js",
+        "frontend": "cd frontend && npm run dev",
+        "start": "npx -y concurrently \"npm run backend\" \"npm run frontend\""
+    }
+}
