@@ -26,23 +26,54 @@ io.on('connection', (socket) => {
 
     socket.on('create_room', (playerName) => {
         const roomCode = generateRoomCode();
+        const actualName = playerName || 'Host';
         rooms.set(roomCode, {
             game: null,
-            players: [{ id: 0, socketId: socket.id, name: playerName || 'Host' }],
+            players: [{ id: 0, socketId: socket.id, name: actualName }],
             hostId: socket.id
         });
         socket.join(roomCode);
         socket.emit('room_created', {
             roomCode,
             playerIndex: 0,
+            playerName: actualName,
             players: rooms.get(roomCode).players.map(p => ({ id: p.id, name: p.name }))
         });
     });
 
     socket.on('join_room', ({ roomCode, playerName }) => {
-        const room = rooms.get(roomCode.toUpperCase());
+        const code = roomCode.toUpperCase();
+        const room = rooms.get(code);
         if (!room) {
             socket.emit('error', 'Room not found');
+            return;
+        }
+
+        // Check if this is a rejoin
+        const existingPlayer = room.players.find(p => p.name === playerName);
+        if (existingPlayer) {
+            existingPlayer.socketId = socket.id;
+            socket.join(code);
+
+            if (room.game && room.game.isStarted) {
+                socket.emit('game_started', {
+                    hand: room.game.players[existingPlayer.id].hand,
+                    gameState: {
+                        ...room.game.getState(),
+                        playerNames: room.players.map(pl => pl.name)
+                    },
+                    rejoined: true,
+                    playerName: existingPlayer.name,
+                    playerIndex: existingPlayer.id
+                });
+            } else {
+                socket.emit('joined_room', {
+                    roomCode: code,
+                    playerIndex: existingPlayer.id,
+                    playerName: existingPlayer.name,
+                    players: room.players.map(p => ({ id: p.id, name: p.name }))
+                });
+            }
             return;
         }
 
@@ -57,17 +88,19 @@ io.on('connection', (socket) => {
         }
 
         const playerIndex = room.players.length;
-        room.players.push({ id: playerIndex, socketId: socket.id, name: playerName || `Player ${playerIndex + 1}` });
-        socket.join(roomCode.toUpperCase());
+        const actualName = playerName || `Player ${playerIndex + 1}`;
+        room.players.push({ id: playerIndex, socketId: socket.id, name: actualName });
+        socket.join(code);
 
         socket.emit('joined_room', {
-            roomCode: roomCode.toUpperCase(),
+            roomCode: code,
             playerIndex,
+            playerName: actualName,
             isHost: false,
             players: room.players.map(p => ({ id: p.id, name: p.name }))
         });
 
-        io.to(roomCode.toUpperCase()).emit('player_joined', {
+        io.to(code).emit('player_joined', {
             playersCount: room.players.length,
             players: room.players.map(p => ({ id: p.id, name: p.name }))
         });
@@ -138,20 +171,60 @@ io.on('connection', (socket) => {
         });
     });
 
+    socket.on('rejoin_room', ({ roomCode, playerName }) => {
+        const room = rooms.get(roomCode.toUpperCase());
+        if (!room) return;
+
+        const player = room.players.find(p => p.name === playerName);
+        if (player) {
+            player.socketId = socket.id;
+            socket.join(roomCode.toUpperCase());
+
+            if (room.game && room.game.isStarted) {
+                socket.emit('game_started', {
+                    hand: room.game.players[player.id].hand,
+                    gameState: {
+                        ...room.game.getState(),
+                        playerNames: room.players.map(pl => pl.name)
+                    },
+                    rejoined: true,
+                    playerName: player.name,
+                    playerIndex: player.id
+                });
+            } else {
+                socket.emit('joined_room', {
+                    roomCode: roomCode.toUpperCase(),
+                    playerIndex: player.id,
+                    playerName: player.name,
+                    players: room.players.map(p => ({ id: p.id, name: p.name }))
+                });
+            }
+        }
+    });
+
     socket.on('disconnect', () => {
         for (const [code, room] of rooms.entries()) {
-            room.players = room.players.filter(p => p.socketId !== socket.id);
-            if (room.players.length === 0) {
-                rooms.delete(code);
-            } else if (room.hostId === socket.id) {
-                // Assign new host if current host leaves
-                room.hostId = room.players[0].socketId;
-                io.to(room.players[0].socketId).emit('you_are_host');
+            const player = room.players.find(p => p.socketId === socket.id);
+            if (!player) continue;
+
+            // Only remove player if game hasn't started
+            if (!room.game || !room.game.isStarted) {
+                room.players = room.players.filter(p => p.socketId !== socket.id);
+                if (room.players.length === 0) {
+                    rooms.delete(code);
+                } else if (room.hostId === socket.id) {
+                    room.hostId = room.players[0].socketId;
+                    io.to(room.players[0].socketId).emit('you_are_host');
+                }
+
+                io.to(code).emit('player_joined', {
+                    playersCount: room.players.length,
+                    players: room.players.map(p => ({ id: p.id, name: p.name }))
+                });
+            } else {
+                // Game in progress, don't remove, just log or notify
+                console.log(`Player ${player.name} disconnected from active game ${code}`);
             }
-            io.to(code).emit('player_joined', {
-                playersCount: room.players.length,
-                players: room.players.map(p => ({ id: p.id, name: p.name }))
-            });
         }
     });
 });

@@ -68,21 +68,43 @@ export default function App() {
     }, [chatMessages, showChat]);
 
     useEffect(() => {
-        socket.on('room_created', ({ roomCode, playerIndex, players }) => {
+        const checkSession = () => {
+            const savedRoom = localStorage.getItem('ace_room');
+            const savedName = localStorage.getItem('ace_name');
+            if (savedRoom && savedName) {
+                setPlayerName(savedName);
+                socket.emit('rejoin_room', { roomCode: savedRoom, playerName: savedName });
+            }
+        };
+
+        socket.on('connect', checkSession);
+
+        // Call immediately in case socket is already connected
+        if (socket.connected) {
+            checkSession();
+        }
+
+        socket.on('room_created', ({ roomCode, playerIndex, players, playerName: name }) => {
             setCurrentRoomCode(roomCode);
             setPlayerIndex(playerIndex);
+            setPlayerName(name); // Use server-confirmed name
             setIsHost(true);
             setView('lobby');
             setPlayersCount(1);
             if (players) setPlayers(players);
+            localStorage.setItem('ace_room', roomCode);
+            localStorage.setItem('ace_name', name);
         });
 
-        socket.on('joined_room', ({ roomCode, playerIndex, players }) => {
+        socket.on('joined_room', ({ roomCode, playerIndex, players, playerName: name }) => {
             setCurrentRoomCode(roomCode);
             setPlayerIndex(playerIndex);
+            setPlayerName(name); // Use server-confirmed name
             setIsHost(false);
             setView('lobby');
             if (players) setPlayers(players);
+            localStorage.setItem('ace_room', roomCode);
+            localStorage.setItem('ace_name', name);
         });
 
         socket.on('player_joined', ({ playersCount, players }) => {
@@ -92,9 +114,14 @@ export default function App() {
 
         socket.on('you_are_host', () => setIsHost(true));
 
-        socket.on('game_started', ({ hand, gameState }) => {
+        socket.on('game_started', ({ hand, gameState, playerIndex: index, playerName: name, rejoined }) => {
             setHand(hand);
             setGameState(gameState);
+            if (rejoined) {
+                setPlayerIndex(index);
+                setPlayerName(name);
+                setCurrentRoomCode(localStorage.getItem('ace_room'));
+            }
             setView('game');
         });
 
@@ -159,6 +186,12 @@ export default function App() {
         navigator.clipboard.writeText(currentRoomCode);
         setError('Room code copied!');
         setTimeout(() => setError(null), 2000);
+    };
+
+    const handleReset = () => {
+        localStorage.removeItem('ace_room');
+        localStorage.removeItem('ace_name');
+        window.location.reload();
     };
 
     if (view === 'landing') {
@@ -255,7 +288,7 @@ export default function App() {
                             </div>
                         ))}
                     </div>
-                    <button className="btn btn-primary" onClick={() => window.location.reload()}>New Game</button>
+                    <button className="btn btn-primary" onClick={handleReset}>New Game</button>
                 </motion.div>
             </div>
         );
